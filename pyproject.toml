@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "srt-translate"
+version = "0.1.0"
+description = "Translate SRT subtitles with a six-stage, editable glossary workflow."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.40",
+    "platformdirs>=4",
+    "pydantic>=2,<3",
+    "srt>=3.5.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+srt-translate = "srt_translate.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+srt_translate = ["config.default.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/integration"]
