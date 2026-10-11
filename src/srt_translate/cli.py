@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--no-translate-glossary", action="store_true",
-        help="keep all subset terms in their original spelling",
+        help="keep applicable candidate terms in their original spelling",
     )
     parser.add_argument(
         "--delay-between-requests", type=nonnegative_seconds, default=0.0,
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
                 elif stage == "glossary":
                     result = build_glossary(entities_dir, glossary_path)
                 elif stage == "subsets":
-                    result = generate_glossary_subsets(entities_dir, glossary_path, subsets_dir)
+                    result = generate_glossary_subsets(entries_dir, glossary_path, subsets_dir)
                 elif stage == "translate":
                     result = translate(
                         entries_dir, subsets_dir, translations_dir,

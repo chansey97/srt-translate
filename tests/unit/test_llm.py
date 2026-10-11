@@ -88,8 +88,16 @@ def test_prompt_language_and_term_modes():
         assert "source_lang" in prompt and "target_lang" in prompt
         assert "zh-Hans" in prompt and "zh-Hant" in prompt
     assert "reasoning 用一句简短的英文" in DISCOVER_ENTITIES_PROMPT
-    assert "glossary 是原词到译名的映射" in translation_prompt()
+    assert "glossary 是原词到译名的候选映射" in translation_prompt()
     assert "do_not_translate_terms" not in translation_prompt()
     assert "do_not_translate_terms" in translation_prompt(True)
-    assert "glossary 是原词到译名的映射" not in translation_prompt(True)
+    assert "glossary 是原词到译名的候选映射" not in translation_prompt(True)
     assert r"{\c&H00FFFF&}" in translation_prompt()
+    for prompt in [translation_prompt(), translation_prompt(True)]:
+        assert "候选不代表实际出现" in prompt
+        assert "逐句根据当前 entries 的语境判断词条是否适用" in prompt
+        assert "Ann 可因 Anna 入选、Orc 可因 force 入选" in prompt
+        assert "因 Orc 改变 force 的正常翻译、将 force 保留原文" in prompt
+        assert "Moonshadow City 和 Moonshadow" in prompt
+    assert "严格使用该词条的值" in translation_prompt()
+    assert "不能因子串误匹配而将普通词保留原文" in translation_prompt(True)

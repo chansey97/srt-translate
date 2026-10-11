@@ -12,9 +12,9 @@ flowchart TD
     D --> E["entities：实体分片"]
     E --> F["3. glossary：按置信度统一译名"]
     F --> G["glossary.json"]
-    E --> H["4. subsets：按实体 source 取统一译名"]
+    C --> H["4. subsets：按原文匹配 glossary 候选"]
     G --> H
-    H --> I["glossary_subsets：分片术语表"]
+    H --> I["glossary_subsets：分片候选术语表"]
     C --> J["5. translate：加入术语表及双语历史后翻译"]
     I --> J
     J --> K["translations：核对数量和逐项 n 后保存"]
@@ -128,7 +128,7 @@ srt-translate INPUT_SRT --source-lang LANG [--target-lang LANG] [OPTIONS]
 | `--input-encoding NAME` | `utf-8-sig` | 原 SRT 编码，默认兼容带 BOM 和不带 BOM 的 UTF-8 |
 | `--chunk-size N` | `20` | 每片字幕条数，正整数 |
 | `--history-size N` | `5` | 参考的前文双语字幕条数，`0` 禁用 |
-| `--no-translate-glossary` | 不启用 | 保留当前分片术语表中所有术语的原词 |
+| `--no-translate-glossary` | 不启用 | 将模型确认适用的候选术语保留原词 |
 | `--delay-between-requests SECONDS` | `0` | 每次模型调用前的等待秒数，含第一次；支持非负小数 |
 | `--from-stage NAME` | `extract` | 起始阶段，包含该阶段 |
 | `--to-stage NAME` | `backfill` | 结束阶段，包含该阶段 |
@@ -138,7 +138,7 @@ srt-translate INPUT_SRT --source-lang LANG [--target-lang LANG] [OPTIONS]
 
 ### 检查、编辑与续跑
 
-先生成全局术语表，检查或修改后继续：
+先生成全局术语表，可以新增、删除词条或修改译名，然后继续：
 
 ```powershell
 srt-translate input.srt --source-lang en --to-stage glossary
@@ -156,13 +156,15 @@ srt-translate input.srt --source-lang en --from-stage translate
 
 术语表采用 `"原词": "译名"` 格式；若需保留个别原词，将键和值设为相同，例如 `"Alexia": "Alexia"`。
 
+分片术语表从原文匹配全局词条，不依赖该片是否发现过实体。匹配忽略大小写和空白差异，保留原始键值；命中的词条仅是候选。例如 `Orc` 可能因 `force` 入选，模型应忽略这种无关匹配。默认模式对确认适用的术语严格使用指定译名，`--no-translate-glossary` 则保留其原文写法。
+
 任务中断后，重新运行原命令即可续跑。已有产物会跳过，修改上游内容不会自动更新后续产物。需要重新生成时，按下表处理；删除产物会丢失其中的人工编辑。表中路径均相对于任务目录。
 
 | 修改内容 | 处理方式 | 续跑起点 |
 | --- | --- | --- |
 | 原 SRT、输入编码或分片大小 | 使用新的输出父目录 | `extract` |
 | 背景或模型 | 删除 `entities/`、`glossary.json`、`glossary_subsets/`、`translations/`、`backfill/` | `discover` |
-| `glossary.json` | 删除 `glossary_subsets/`、`translations/`、`backfill/` | `subsets` |
+| `glossary.json` 词条的新增、删除或译名修改 | 删除 `glossary_subsets/`、`translations/`、`backfill/` | `subsets` |
 | 分片术语表、术语开关或历史条数 | 删除 `translations/`、`backfill/` | `translate` |
 | `translations/` 中的译文 | 删除 `backfill/` | `backfill` |
 

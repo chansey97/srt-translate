@@ -21,7 +21,8 @@ def test_complete_pipeline_and_reuse(tmp_path, make_srt, make_entity, fake_clien
     output_base = tmp_path / "explicit-parent"
     output = output_base / "input__en_to_zh-Hans"
     client = fake_client([
-        {"entities": [make_entity("Elias", "旧名", scores=(0.5, 0.5, 0.5)), make_entity("Alexia", "阿莱克西亚")]},
+        # Elias is missed in the first shard but discovered in the second.
+        {"entities": [make_entity("Alexia", "阿莱克西亚")]},
         {"entities": [make_entity("Elias", "伊莱亚斯")]},
         {"entries": [{"n": 10, "text": "伊莱亚斯来了。"}, {"n": 7, "text": "你好，阿莱克西亚。"}]},
         {"entries": [{"n": 35, "text": "伊莱亚斯，等等！"}]},
@@ -143,12 +144,52 @@ def test_single_subsets_stage_uses_only_its_inputs(tmp_path, monkeypatch):
         pytest.fail("Subset generation must not create an API client")
     monkeypatch.setattr(cli, "OpenAI", unexpected_client)
     output = tmp_path / "missing__en_to_zh-Hans"
-    write_json(output / "entities" / "000001_000001.json", [{"source": "Elias"}])
+    write_json(output / "entries" / "000001_000001.json", [{"n": 1, "text": "Elias"}])
     write_json(output / "glossary.json", {"Elias": "人工译名"})
     assert cli.main([str(tmp_path / "missing.srt"), "--source-lang", "en", "--output-dir", str(tmp_path), "--from-stage", "subsets", "--to-stage", "subsets"]) == 0
     assert read_json(output / "glossary_subsets" / "000001_000001.json") == {"Elias": "人工译名"}
-    assert not (output / "entries").exists()
+    assert not (output / "entities").exists()
     assert not (output / "translations").exists()
+
+
+@pytest.mark.parametrize("no_translate", [False, True])
+def test_edited_global_glossary_candidates_reach_translation_on_resume(
+    tmp_path, make_srt, make_entity, fake_client, monkeypatch, no_translate,
+):
+    source = make_srt([(1, "Elias tells Anna to use force in Moonshadow City near New\nYork.")])
+    output = tmp_path / "input__en_to_zh-Hans"
+    name = "000001_000001.json"
+    client = fake_client([
+        {"entities": [make_entity("Elias", "旧译名")]},
+        {"entries": [{"n": 1, "text": "译文"}]},
+    ])
+    monkeypatch.setattr(cli, "OpenAI", lambda **kwargs: client)
+    args = [str(source), "--source-lang", "en", "--output-dir", str(tmp_path)]
+    assert cli.main([*args, "--to-stage", "subsets"]) == 0
+    subset = output / "glossary_subsets" / name
+    assert read_json(subset) == {"Elias": "旧译名"}
+
+    # Remove a discovered term and add terms that discovery never returned.
+    candidates = {"Ann": "安", "Orc": "兽人", "Moonshadow City": "月影城", "Moonshadow": "月影", "New York": "纽约"}
+    write_json(output / "glossary.json", {**candidates, "Unused": "无关"})
+    subset_args = [*args, "--from-stage", "subsets", "--to-stage", "subsets"]
+    assert cli.main(subset_args) == 0
+    assert read_json(subset) == {"Elias": "旧译名"}
+    subset.unlink()
+
+    mode_args = ["--no-translate-glossary"] if no_translate else []
+    assert cli.main([*args, "--from-stage", "subsets", *mode_args]) == 0
+    assert read_json(subset) == candidates
+    assert len(client.calls) == 2
+    request = client.calls[-1]
+    assert "候选不代表实际出现" in request["messages"][0]["content"]
+    payload = json.loads(request["messages"][1]["content"])
+    if no_translate:
+        assert payload["do_not_translate_terms"] == sorted(candidates)
+        assert "glossary" not in payload
+    else:
+        assert payload["glossary"] == candidates
+        assert "do_not_translate_terms" not in payload
 
 
 def test_cli_term_mode_and_delay_reach_translation(tmp_path, fake_client, monkeypatch):

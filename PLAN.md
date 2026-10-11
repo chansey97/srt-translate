@@ -6,7 +6,7 @@
 
 六阶段流程：
 
-**抽取文本条目 → 发现实体、生成译名和打分 → 构建全局 glossary → 按实体分片生成 glossary 子集 → 翻译 → 回填 SRT。**
+**抽取文本条目 → 发现实体、生成译名和打分 → 构建全局 glossary → 按原文匹配 glossary 候选子集 → 翻译 → 回填 SRT。**
 
 ```mermaid
 flowchart TD
@@ -16,9 +16,9 @@ flowchart TD
     D --> E["entities/：实体分片"]
     E --> F["3. 按置信度统一译名"]
     F --> G["glossary.json：原词与译名"]
-    E --> H["4. 按实体 source 从 glossary 取译名"]
+    C --> H["4. 按原文匹配 glossary 候选"]
     G --> H
-    H --> I["glossary_subsets/：各分片的术语表"]
+    H --> I["glossary_subsets/：各分片的候选术语表"]
     C --> J["5. 翻译<br/>加入术语表和双语历史、调用 LLM<br/>核对数量和逐项 n"]
     I --> J
     J --> K["translations/：译文分片"]
@@ -41,7 +41,7 @@ flowchart TD
 - 源语言由 `--source-lang` 指定，目标语言由 `--target-lang` 指定（默认 `--target-lang`  为 `zh-Hans`）。
 - 程序不限定语言列表；语言参数传给 LLM。具体语言的翻译质量取决于模型。
 - 实体发现始终生成目标语言的建议译名。
-- 翻译默认按 glossary 子集中的译名；指定 `--no-translate-glossary` 后，不再翻译 glossary 子集中的术语。
+- glossary 子集提供候选，由模型逐句判断是否适用。确认属于对应术语后，默认严格使用指定译名；指定 `--no-translate-glossary` 后，保留该术语在原文中的写法。
 - 用户可以编辑任何阶段的产物，包括全局 glossary、单个 glossary 子集和译文分片。编辑后保持文件结构，并按第 10 节清理需要重新生成的下游文件。
 - 输出父目录默认为当前工作目录，可通过 `--output-dir` 指定；始终在其中按原文件主名、源语言和目标语言生成任务目录。
 - **文件存在即跳过生成。** 用户自行清理过期或损坏的产物。
@@ -50,7 +50,7 @@ flowchart TD
 - 各阶段只处理实际存在的输入分片，不自动补齐上游分片；用户负责按阶段顺序完成任务。
 - 译文的换行由 LLM 按目标语言安排；提示词要求保留 URL、HTML 标签及属性、ASS 控制块和音乐符号，可见文本正常翻译。
 - 原 SRT 视为合法输入，使用库解析；不修改原文件。
-- 不引入 hash、自动失效传播、原子写入、业务重试、自动修复、别名归并或一词多义判断。
+- 不引入 hash、自动失效传播、原子写入、业务重试或自动修复；不在本地实现别名归并或一词多义判断。
 
 ## 2. 技术选型、安装与项目结构
 
@@ -169,7 +169,7 @@ CLI 的 `--output-dir` 指输出父目录，`task_dir` 指其中自动生成的�
 | `phase_extract_entries.py` | 解析原 SRT，提取 n 和 text，按出现顺序分片 | entries 分片 |
 | `phase_discover_entities.py` | 逐片读取 entries，请求 LLM 抽取实体、分类、生成译名和打分 | 同名 entities 分片 |
 | `phase_build_glossary.py` | 汇总 entities，按 source 分组，选择平均置信度最高的译名 | glossary.json |
-| `phase_generate_glossary_subsets.py` | 读取各 entities 分片的 source，从 glossary 取得统一译名 | 同名 glossary_subsets 分片 |
+| `phase_generate_glossary_subsets.py` | 读取 entries 原文，从 glossary 中匹配候选，保留原始键值 | 同名 glossary_subsets 分片 |
 | `phase_translate.py` | 读取 entries、同名 glossary 子集和双语历史，请求 LLM 翻译；核对数量和逐项 n 后落盘 | 同名 translations 分片 |
 | `phase_backfill.py` | 按分片顺序汇总译文，按原字幕顺序替换正文并保存 | backfill 目录中的 SRT |
 
@@ -210,7 +210,7 @@ CLI 的 `--output-dir` 指输出父目录，`task_dir` 指其中自动生成的�
 | entries 分片 | 数组 | `{"n": 原编号, "text": 原文}` |
 | entities 分片 | 数组 | 第 5.2 节规定的九字段实体 |
 | glossary.json | 对象 | 原词到译名的映射 |
-| glossary_subsets 分片 | 对象 | 对应 entities 分片的 source 在全局 glossary 中的键值 |
+| glossary_subsets 分片 | 对象 | 根据对应 entries 原文匹配到的 glossary 候选，保留原始键值 |
 | translations 分片 | 数组 | `{"n": 原编号, "text": 译文}` |
 
 实体数组、全局 glossary 和 glossary 子集可以为空。
@@ -238,7 +238,7 @@ srt-translate INPUT_SRT --source-lang LANG [--target-lang LANG] [OPTIONS]
 | `--input-encoding NAME` | `utf-8-sig` | 原 SRT 解码方式 |
 | `--chunk-size N` | `20` | 正整数，仅抽取阶段使用 |
 | `--history-size N` | `5` | 非负整数；0 表示禁用历史 |
-| `--no-translate-glossary` | `False` | 指定后 glossary 子集所列术语统一保留原词 |
+| `--no-translate-glossary` | `False` | 将模型确认适用的候选术语保留原词 |
 | `--delay-between-requests SECONDS` | `0` | 每次模型调用前等待的秒数，支持小数，必须为非负有限数 |
 | `--from-stage NAME` | `extract` | 从指定阶段开始，包含该阶段 |
 | `--to-stage NAME` | `backfill` | 执行到指定阶段，包含该阶段 |
@@ -259,8 +259,8 @@ srt-translate INPUT_SRT --source-lang LANG [--target-lang LANG] [OPTIONS]
 
 `--no-translate-glossary` 的内部变量名为 `no_translate_glossary`：
 
-- 未指定时为 False，使用 glossary 子集中的译名；
-- 指定时为 True，保留术语原词。
+- 未指定时为 False，对模型确认适用的候选使用 glossary 子集中的译名；
+- 指定时为 True，对模型确认适用的候选保留原文写法。两种模式都忽略仅因子串重合而入选的无关词条。
 
 `--delay-between-requests` 对应内部参数 `delay_between_requests`，默认 0.0，单位为秒；实体发现和翻译共用这个参数。
 
@@ -373,7 +373,7 @@ build_glossary(
 ) -> Path
 
 generate_glossary_subsets(
-    entities_dir, glossary_path, glossary_subsets_dir
+    entries_dir, glossary_path, glossary_subsets_dir
 ) -> list[Path]
 
 translate(
@@ -495,7 +495,7 @@ context 复制同一条字幕中包含 source、能支持判断的简短原文�
 
 ### 5.3 阶段 3：构建全局 glossary
 
-全局 glossary 用于统一各分片中的译名，并允许用户修改。
+全局 glossary 用于统一各分片中的译名，用户可以新增、删除词条或修改译名。
 
 glossary.json 已存在时跳过；否则只汇总 entities 目录中实际存在的分片，不检查是否覆盖了全部 entries：
 
@@ -521,64 +521,69 @@ glossary.json 已存在时跳过；否则只汇总 entities 目录中实际存�
 
 `"Alexia": "Alexia"` 表示这个名称保留原词，其他名称仍采用各自的译名。此类配置可以出现在全局 glossary，也可以只写入某个分片的子集。
 
-## 6. 阶段 4：按实体分片生成 glossary 子集
+## 6. 阶段 4：按原文匹配 glossary 候选子集
 
 ### 6.1 目的与输入
 
-子集用于减少翻译请求中的术语数量。当前分片需要哪些术语，由同名 entities 文件中的 source 决定；每个术语的译名从全局 glossary 取得。
+子集用于减少翻译请求中的术语数量。对当前分片的原文匹配全局 glossary 的键，选出可能适用的词条，再由模型结合语境判断。候选不代表实际出现，也不要求它曾被当前分片的实体发现阶段抽取。
 
-本阶段读取 entities 目录和 glossary.json，输出同名 glossary_subsets 文件。本阶段不需要语言参数；是否保留原词的开关也不影响子集生成。
+本阶段只读取 entries 目录和 glossary.json，输出同名 glossary_subsets 文件，不依赖 entities。本阶段不需要语言参数；是否保留原词的开关也不影响子集生成。
 
 ### 6.2 生成规则
 
-对每个 entities 分片：
+对每个 entries 分片：
 
 1. 对应子集文件已存在则跳过。
-2. 收集该实体分片中的 source，按原字符串去重并排序。
-3. 按 source 直接读取 `glossary[source]`，复制原词及统一译名。
-4. 写入子集；实体分片为空时写入 `{}`。
+2. 按条目顺序用换行连接各项 text。只使用当前分片原文，不加入背景或 history。
+3. 对文本和 glossary 的键使用 Unicode 大小写折叠 `casefold()`，并将连续空白（含换行、制表符和 Unicode 空白）合并为一个空格，去掉两端空白。
+4. 归一化后的键只要是归一化文本的子串，就纳入候选；归一化后为空的键忽略。不检查词边界，不做最长词过滤，长短词可同时入选。
+5. 按 glossary 原始键排序，原样复制键和值。归一化后相同的不同原始键也全部保留。
+6. 写入子集；原文为空、glossary 为空或没有命中时写入 `{}`。
 
-注：glossary 由全部实体分片构建，正常流程能保证每个 source 都有对应键。人工编辑应保持这个对应关系；若破坏了它，直接字典访问自然报错，无需额外预检查或跳过逻辑。
+匹配范围是整个分片，因此同一分片内跨字幕条目的短语也可以入选，但不跨分片匹配。合并文本只用于选候选，不改变原文条目、编号或翻译请求中的 text。
 
 核心逻辑相当于：
 
 ```python
-sources = {entity["source"] for entity in entities}
+def normalize(text):
+    return " ".join(text.casefold().split())
+
+text = normalize("\n".join(entry["text"] for entry in entries))
 subset = {
     source: glossary[source]
-    for source in sorted(sources)
+    for source in sorted(glossary)
+    if normalize(source) and normalize(source) in text
 }
 ```
 
-例如，一个实体分片包含 Elias 和 Alexia，其各自建议译名来自当前分片的模型判断；全局 glossary 使用第 5.3 节的内容时，子集为：
+实现会在首次需要生成子集时读取 glossary，并预先归一化其键，供后续分片复用。使用标准库字符串操作即可，不引入匹配库或语言相关的分词规则。
 
-```json
-{
-  "Alexia": "Alexia",
-  "Elias": "伊莱亚斯"
-}
-```
+| glossary 原始键 | 分片原文 | 候选结果 |
+| --- | --- | --- |
+| `Ann` | `Anna` | 纳入 `Ann`，由模型判断是否适用 |
+| `Orc` | `force` | 纳入 `Orc`，但不能据此改变 `force` 的正常翻译或保留其原文 |
+| `Moonshadow City`、`Moonshadow` | `Moonshadow City` | 两者均纳入，由模型按完整语境处理 |
+| `New York` | `New\nYork` | 纳入 `New York`，保留 glossary 的原始键值 |
+| `Straße` | `STRASSE` | Unicode 大小写折叠后命中 |
 
-Heron 不在该实体分片中，因此不进入这个子集。
-
-注：本节阐述的子集生成规则的优点是实现简单。另一种方法是构造一个匹配器，在待译文本找出所有在 glossary 中出现的词汇，但实现复杂（例如：需要考虑多词术语边界、大小写、最长词匹配等问题，不同的目标语言需要不同的处理），首版不予考虑。
+这种方法接受误匹配以减少实体漏抽造成的遗漏。候选数量和请求长度可能增加，词边界、完整名称和语境适用性由翻译提示词约束模型判断；本地匹配本身不保证译名使用正确。
 
 ### 6.3 人工编辑与覆盖范围
 
-采用实体分片作为依据，有以下明确行为：
+根据原文匹配候选，有以下行为：
 
 | 情况 | 结果或处理方式 |
 | --- | --- |
-| 当前实体分片漏抽某个词，但全局 glossary 中有它 | 该词不会自动进入当前子集；可手动补到子集 |
-| 只在全局 glossary 中新增一个 source | 只有包含相同 source 的实体分片才能自动引用它 |
-| 在 glossary 中修改某个现有 source 的值 | 删除子集并重建后，相关分片采用新译名 |
-| 从 glossary 删除仍被实体分片引用的 source | 再生成相关子集时，直接字典访问报错；需恢复对应词条 |
-| 修改某个子集中的译名 | 子集直接作用于当前分片；生成的译文可能通过 history 影响后续翻译 |
-| 在子集中新增一个词 | 翻译阶段直接使用，不要求它也存在于 entities 或全局 glossary |
+| 当前实体分片漏抽某个词，但全局 glossary 中有它 | 原文匹配到该词时，仍纳入候选 |
+| 在全局 glossary 中新增一个词 | 重建子集后，所有原文匹配到它的分片均可将其作为候选，不要求 entities 中存在该词 |
+| 在 glossary 中修改词条的值 | 重建子集后，相关候选使用新译名 |
+| 从 glossary 删除词条 | 重建子集后不再纳入该词，不因 entities 仍包含它而报错 |
+| 修改某个子集中的译名 | 保留人工修改，模型确认适用后使用；新译文可能通过 history 影响后续翻译 |
+| 在子集中新增一个词 | 翻译阶段原样传给模型作为候选，不要求它存在于 entities 或全局 glossary，也不再次做本地匹配 |
 
-因此，子集不是对原文重新扫描所得的全部命中词；它承接实体抽取的结果。首版接受 LLM 可能的漏抽导致个别分片未使用全局译名的情况。
+全局 glossary 的增删改不会自动使已有子集失效。按第 10.2 节删除旧子集、译文和回填文件后，从 subsets 继续，即可应用新词典及候选匹配规则。
 
-用户可编辑子集以补充或覆盖当前分片的术语。保留编辑后的子集文件，按第 10.2 节清理旧译文后从 translate 继续；重新生成该子集会重新采用 entities 和全局 glossary 的内容。当前分片的新译文可能进入后续 history，尤其在后续子集未收录相关词条时影响其用词。
+用户也可编辑子集以补充或覆盖当前分片的候选。保留编辑后的子集文件，清理旧译文后从 translate 继续；重新生成子集会改为使用 entries 原文和全局 glossary 的匹配结果。
 
 ## 7. 阶段 5：按子集翻译
 
@@ -641,7 +646,7 @@ history 取当前分片之前紧邻的最后 history-size 条字幕，按原字�
 }
 ```
 
-数组取自 glossary 子集的键，沿用子集顺序。字段 glossary 与 do_not_translate_terms 互斥。空子集分别传 `"glossary": {}` 或 `"do_not_translate_terms": []`。
+数组取自 glossary 子集的键，沿用子集顺序。字段 glossary 与 do_not_translate_terms 互斥。两者均为候选，由模型逐句判断是否适用。空子集分别传 `"glossary": {}` 或 `"do_not_translate_terms": []`。
 
 ### 7.3 翻译提示词
 
@@ -660,7 +665,11 @@ source_lang 和 target_lang 的值使用 BCP 47 语言标签，分别表示源�
 
 方括号中的音效、说话内容和说话人名称属于正文，可按语境和术语模式翻译。
 
-术语表可能同时包含完整名称和较短的词。根据实际语境优先理解完整名称，不把它机械拆成多个短词来翻译；有多个大小写词条时，优先采用与原文表记一致的词条。
+术语均为候选，候选不代表实际出现。候选通过忽略大小写和空白差异的子串匹配选出，可能包含无关词条。逐句根据当前 entries 的语境判断词条是否适用，不把某一句的判断机械用于其他句子。
+
+忽略仅因子串重合而入选的无关词条。例如 Ann 可因 Anna 入选、Orc 可因 force 入选，但不能仅凭这种重合把 Anna 当作 Ann，或因 Orc 改变 force 的正常翻译、将 force 保留原文。不要因候选词条而添加原文没有的内容。
+
+候选可能同时包含完整名称和较短的词，例如 Moonshadow City 和 Moonshadow。根据实际语境优先理解完整名称，不把它机械拆成多个短词来翻译；有多个大小写词条时，优先采用与原文表记一致的词条。
 
 只返回符合响应 Schema 的 JSON 对象，顶层只有 entries，数组内每项只有 n 和 text。
 ```
@@ -668,7 +677,7 @@ source_lang 和 target_lang 的值使用 BCP 47 语言标签，分别表示源�
 默认模式追加：
 
 ```text
-glossary 是原词到译名的映射。翻译对应术语时，使用该词条的值；不要擅自修改或再次翻译这个值，即使它与 target_lang 指定的语言不同。
+glossary 是原词到译名的候选映射。仅当语境确认原文属于对应术语时，严格使用该词条的值；不要擅自修改或再次翻译这个值，即使它与 target_lang 指定的语言不同。不适用的候选不影响正文的正常翻译。
 
 如果键和值相同，例如 "Alexia": "Alexia"，表示这个名称保留原词。
 
@@ -678,7 +687,7 @@ glossary 是原词到译名的映射。翻译对应术语时，使用该词条�
 指定 `--no-translate-glossary` 时追加：
 
 ```text
-do_not_translate_terms 中列出的名称和术语保留原语言写法；其他内容正常翻译为 target_lang 指定的语言。结合完整句子处理术语周围的语法成分。
+do_not_translate_terms 是可能需要保留原文的候选术语列表。仅当语境确认原文属于对应术语时，保留该术语在原文中的写法。忽略不适用的候选，不能因子串误匹配而将普通词保留原文；其他内容正常翻译为 target_lang 指定的语言。结合完整句子处理术语周围的语法成分。
 ```
 
 ### 7.4 检查译文并落盘
@@ -885,7 +894,7 @@ response_format = {
 | entries 分片 | 根据原 SRT 生成 |
 | entities 分片 | 读取同名 entries 并请求模型 |
 | glossary.json | 汇总实体分片并选择译名 |
-| glossary_subsets 分片 | 从同名 entities 取 source，从 glossary 取译名 |
+| glossary_subsets 分片 | 从同名 entries 原文匹配 glossary 候选，保留原始键值 |
 | translations 分片 | 读取原文、同名子集及所需历史并请求模型，核对数量和逐项 n 后保存 |
 | backfill 目录中的 SRT | 汇总已有译文，按原字幕顺序回填 |
 
@@ -897,7 +906,7 @@ extract 仍需解析原 SRT 才能确定分片。已有文件在后续被使用�
 
 以下“旧 SRT”指 backfill 目录中的回填文件。清理 task_dir 均指当前任务目录。
 
-统一修改各相关分片的译名时，编辑 glossary.json；仅调整某个分片的词条或译名时，直接编辑 glossary_subsets 目录中的对应文件。
+统一新增、删除词条或修改各相关分片的译名时，编辑 glossary.json；仅调整某个分片的候选或译名时，直接编辑 glossary_subsets 目录中的对应文件。
 
 | 用户修改 | 用户清理与续跑 |
 | --- | --- |
@@ -906,7 +915,7 @@ extract 仍需解析原 SRT 才能确定分片。已有文件在后续被使用�
 | 背景、模型或实体抽取提示词 | 删除 entities、glossary.json、glossary_subsets、translations 和旧 SRT，从 discover 继续 |
 | entries 中的正文 | 删除 entities、glossary.json、glossary_subsets、translations 和旧 SRT，从 discover 继续 |
 | entities，想重新选取全局译名 | 删除 glossary.json、glossary_subsets、translations 和旧 SRT，从 glossary 继续 |
-| glossary | 删除 glossary_subsets、translations 和旧 SRT，从 subsets 继续 |
+| glossary 词条的新增、删除或译名修改 | 删除 glossary_subsets、translations 和旧 SRT，从 subsets 继续 |
 | 某个 glossary 子集 | 保留编辑后的子集；删除 translations 和旧 SRT，从 translate 继续 |
 | 术语翻译开关、history 大小或翻译提示词 | 删除 translations 和旧 SRT，从 translate 继续 |
 | translations | 删除旧 SRT，从 backfill 继续 |
@@ -915,7 +924,7 @@ extract 仍需解析原 SRT 才能确定分片。已有文件在后续被使用�
 补充约定：
 
 - 编辑 entries 或 translations 时，条目数量、顺序及 n 应与原 SRT 对应。
-- 在 glossary 中新增 source 不会自动补入未抽到该词的实体分片；局部补词可直接编辑 glossary 子集。
+- 在 glossary 中新增或删除词条后，重建子集即可按原文重新匹配候选，无需修改实体分片；局部补词也可直接编辑 glossary 子集。
 - 改变目标语言也会改变实体阶段生成的译名。新语言组合使用新任务目录，从 extract 完整运行。
 - glossary 子集生成的代码不分语言，但已有子集中的译名属于生成它时使用的目标语言。切换目标语言时仍须重建子集。
 - 修改某个子集并重新翻译、或直接修改某个译文分片后，若希望后续翻译使用新的历史，也要删除后面的译文分片。
@@ -960,17 +969,20 @@ python -m pytest tests/live
 - 九字段 Schema、开放的 type/subtype、空实体数组。
 - 抽取提示词要求英文 reasoning，译名语言取自 target_lang。
 - 三项平均分择优、同分选择最早候选；全空实体产生空 glossary。
-- glossary 子集按当前 entities 的 source 去重，值始终来自 glossary，不使用实体中的旧 translation。
-- 正常构建的 glossary 包含全部实体 source，子集直接按键取值；空实体分片输出 `{}`。人工破坏对应关系时，普通字典访问报错。
-- 不在当前 entities 中的 glossary 键不进入自动生成的子集。
-- 不同大小写、空白和长短词按独立键处理，输出顺序稳定。
-- 子集可以保留人工新增的键或覆盖译名，翻译阶段直接使用。
+- glossary 子集扫描 entries 原文，不读取 entities；某片漏抽的实体可以通过其他分片构建的全局 glossary 进入候选。
+- 全局 glossary 可增删词条或修改译名；重建子集后生效，不再要求与实体 source 一一对应。
+- Unicode 大小写折叠及空白归一化覆盖 `Straße` / `STRASSE`、`New York` / `New\nYork` 和 Unicode 空白。
+- `Ann` / `Anna`、`Orc` / `force` 接受子串命中；长短词同时纳入候选；同一分片内允许跨字幕条目的短语匹配。
+- 原始键值保持不变，不同大小写或空白的键即使归一化后相同也全部保留，输出按原始键排序。
+- 空原文、空 glossary 或无命中时输出 `{}`；空白键不作为候选。
+- 子集可以保留人工新增的键或覆盖译名，翻译阶段直接传给模型作为候选。
 
 ### 11.4 翻译、语言参数和复用
 
 - 两个模型阶段都传入 source_lang、target_lang 和背景文本，提示词未固定翻译为中文。
 - 两类系统提示词均说明 BCP 47 标签的含义；默认目标语言为 zh-Hans，请求使用相同标签。
 - CLI 未指定 `--no-translate-glossary` 开关时 no_translate_glossary 为 False，请求使用 glossary 字段；指定  `--no-translate-glossary` 开关后为 True，请求使用 do_not_translate_terms 字段。
+- 两种模式的提示词均说明候选不代表实际出现，按当前句子的语境确认术语；`Orc` 等误匹配不得影响 `force` 的正常翻译或使其保留原文。普通测试核对请求和提示词，模型实际判断仍需人工抽查。
 - delay_between_requests 默认 0，不等待；设置正数后，每次实际调用前等待一次，包含第一次调用；复用产物不等待。用替换的 sleep 函数验证调用顺序，测试本身无需真实等待。
 - CLI 拒绝负数或非有限的等待时间；两个模型阶段都把等待参数传给 llm.py。
 - history 覆盖第一片、N=0、历史不足、跨多个分片及复用已有译文等情况。
@@ -1000,14 +1012,9 @@ python -m pytest tests/live
 
 README 至少包含：
 
-- .venv 的创建与激活，可编辑安装和普通安装，两种启动入口。
-- 六阶段 Mermaid 图、模块职责、自动生成的任务目录，以及显式 output-dir 的含义。
-- 全部 CLI 参数，以及指定不同 BCP 47 源语言、目标语言标签的示例；说明 zh-Hans 默认表示简体中文。
-- 编辑全局 glossary、单个子集及其他阶段产物后的续跑方式。
-- 使用词典译名、通过相同键值保留个别原词、统一保留原词三种用法。
-- 子集由实体分片生成，漏抽和手动新增词条的处理方式。
-- 输入编码选择、UTF-8 without BOM 和 CRLF 输出约定。
-- API 配置位置、SDK 重试参数、调用前等待的设置及作用范围。
-- 文件存在即跳过、第 10 节的清理规则，以及各阶段不保证发现上游缺片的约定。
-- 每片新译文落盘前核对数量和逐项 n，子集可能通过 history 影响后续翻译。
-- 普通测试与真实 API 测试的运行方式，以及真实测试产物的持久保存位置。
+- 六阶段 Mermaid 图，保留全局 glossary 和分片子集的人工编辑入口。
+- .venv 的创建与激活、普通安装及包含测试依赖的开发安装。
+- config.toml 示例、配置位置与覆盖优先级。
+- 全部 CLI 参数、典型用法、任务目录与输出父目录的含义。
+- glossary 增删改、候选语义、检查编辑与续跑方式，以及已有产物跳过和清理简表。
+- 普通测试与真实 API 测试的运行方式及真实测试产物的位置。

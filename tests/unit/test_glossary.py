@@ -58,32 +58,66 @@ def test_existing_glossary_is_not_read_or_overwritten(tmp_path):
     assert output.read_bytes() == b"edited content"
 
 
-def test_subsets_deduplicate_sort_and_take_values_from_global_glossary(tmp_path, make_entity):
-    entities = [make_entity(source, "old") for source in ["B", "A", "B", "a", " A ", "A B"]]
-    write_json(tmp_path / "entities" / "000001_000002.json", entities)
-    write_json(tmp_path / "entities" / "000003_000003.json", [])
+def test_subsets_match_text_and_preserve_sorted_original_keys_and_values(tmp_path):
+    write_json(tmp_path / "entries" / "000003_000003.json", [{"n": 3, "text": "Quiet."}])
+    write_json(tmp_path / "entries" / "000001_000002.json", [
+        {"n": 1, "text": "A B A B"}, {"n": 2, "text": "a"},
+    ])
     glossary = {key: f"edited {key}" for key in ["A", "B", "a", " A ", "A B", "unused"]}
     write_json(tmp_path / "glossary.json", glossary)
-    paths = generate_glossary_subsets(tmp_path / "entities", tmp_path / "glossary.json", tmp_path / "subsets")
+    paths = generate_glossary_subsets(tmp_path / "entries", tmp_path / "glossary.json", tmp_path / "subsets")
     assert [p.name for p in paths] == ["000001_000002.json", "000003_000003.json"]
     assert read_json(paths[0]) == {key: glossary[key] for key in [" A ", "A", "A B", "B", "a"]}
     assert list(read_json(paths[0])) == [" A ", "A", "A B", "B", "a"]
     assert read_json(paths[1]) == {}
 
 
-def test_missing_glossary_key_is_normal_key_error(tmp_path, make_entity):
-    write_json(tmp_path / "entities" / "000001_000001.json", [make_entity("A", "old")])
-    write_json(tmp_path / "glossary.json", {})
-    with pytest.raises(KeyError, match="A"):
-        generate_glossary_subsets(tmp_path / "entities", tmp_path / "glossary.json", tmp_path / "subsets")
-    assert not (tmp_path / "subsets" / "000001_000001.json").exists()
+@pytest.mark.parametrize("source,text", [
+    ("Ann", "Anna"),
+    ("Orc", "force"),
+    ("Straße", "STRASSE"),
+    ("STRASSE", "Straße"),
+    ("New York", "New\nYork"),
+    (" New\t York ", "NEW\u00a0YORK"),
+    ("New\u2003York", "New \r\n\tYork"),
+    ("東京", "東京へ行こう。"),
+])
+def test_subsets_select_normalized_substring_candidates(tmp_path, source, text):
+    write_json(tmp_path / "entries" / "000001_000001.json", [{"n": 1, "text": text}])
+    write_json(tmp_path / "glossary.json", {source: "指定译名", "unmatched": "无关"})
+    paths = generate_glossary_subsets(tmp_path / "entries", tmp_path / "glossary.json", tmp_path / "subsets")
+    assert read_json(paths[0]) == {source: "指定译名"}
+
+
+def test_subsets_include_overlapping_terms_and_phrases_across_entries(tmp_path):
+    write_json(tmp_path / "entries" / "000001_000002.json", [
+        {"n": 1, "text": "Moonshadow City is near New"},
+        {"n": 2, "text": "York."},
+    ])
+    glossary = {"New York": "纽约", "Moonshadow City": "月影城", "Moonshadow": "月影"}
+    write_json(tmp_path / "glossary.json", glossary)
+    paths = generate_glossary_subsets(tmp_path / "entries", tmp_path / "glossary.json", tmp_path / "subsets")
+    assert read_json(paths[0]) == glossary
+    assert list(read_json(paths[0])) == sorted(glossary)
+
+
+@pytest.mark.parametrize("entries,glossary", [
+    ([{"n": 1, "text": "Elias"}], {}),
+    ([], {"Elias": "伊莱亚斯"}),
+    ([{"n": 1, "text": "Elias"}], {"": "empty", " \t\n": "whitespace"}),
+])
+def test_empty_glossary_shards_and_terms_produce_empty_subsets(tmp_path, entries, glossary):
+    write_json(tmp_path / "entries" / "000001_000001.json", entries)
+    write_json(tmp_path / "glossary.json", glossary)
+    paths = generate_glossary_subsets(tmp_path / "entries", tmp_path / "glossary.json", tmp_path / "subsets")
+    assert read_json(paths[0]) == {}
 
 
 def test_existing_subsets_skip_unreadable_inputs(tmp_path):
     name = "000001_000001.json"
-    write_json(tmp_path / "entities" / name, [{}])
+    write_json(tmp_path / "entries" / name, [{}])
     subset = tmp_path / "subsets" / name
     write_json(subset, {"manual": "override"})
-    assert generate_glossary_subsets(tmp_path / "entities", tmp_path / "missing.json", tmp_path / "subsets") == [subset]
+    assert generate_glossary_subsets(tmp_path / "entries", tmp_path / "missing.json", tmp_path / "subsets") == [subset]
     assert read_json(subset) == {"manual": "override"}
 
