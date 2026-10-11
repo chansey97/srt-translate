@@ -208,17 +208,25 @@ def test_cli_term_mode_and_delay_reach_translation(tmp_path, fake_client, monkey
     assert waits == [1.25]
 
 
-def test_cli_failure_reports_stage_and_path_and_keeps_outputs(tmp_path, make_srt, fake_client, monkeypatch, capsys):
+@pytest.mark.parametrize("failure", ["sdk", "invalid-json"])
+def test_cli_failure_reports_stage_and_path_and_keeps_outputs(tmp_path, make_srt, fake_client, api_response, monkeypatch, capsys, failure):
     source = make_srt([(1, "one")])
-    client = fake_client([RuntimeError("SDK failed")])
+    response = RuntimeError("SDK failed") if failure == "sdk" else api_response(content="```json\n{}\n```")
+    client = fake_client([response])
     monkeypatch.setattr(cli, "OpenAI", lambda **kwargs: client)
     output = tmp_path / "input__en_to_zh-Hans"
     assert cli.main([str(source), "--source-lang", "en", "--output-dir", str(tmp_path)]) == 1
     error = capsys.readouterr().err
-    assert "Error in discover: SDK failed" in error
+    if failure == "sdk":
+        assert "Error in discover: SDK failed" in error
+    else:
+        assert "Error in discover: Expecting value" in error
+        assert "Model 'gemini-3.8-flash-high' returned invalid JSON" in error
+        assert r"```json\n{}\n```" in error
     assert str(output / "entries" / "000001_000001.json") in error
     assert len(client.calls) == 1 and client.closed
     assert (output / "entries" / "000001_000001.json").exists()
+    assert not (output / "entities" / "000001_000001.json").exists()
     assert not (output / "glossary.json").exists()
 
 

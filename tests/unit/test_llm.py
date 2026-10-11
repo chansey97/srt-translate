@@ -34,9 +34,10 @@ def test_request_shape_and_no_local_schema_validation(fake_client):
     payload = {"source_lang": "en", "target_lang": "zh-Hans", "entries": []}
     assert request_json(client=client, model="test-model", system_prompt="提示", payload=payload, response_model=TranslationResponse) == data
     request = client.calls[0]
-    assert set(request) == {"model", "stream", "messages", "response_format"}
+    assert set(request) == {"model", "stream", "messages", "response_format", "reasoning_effort"}
     assert request["model"] == "test-model"
     assert request["stream"] is False
+    assert request["reasoning_effort"] == "none"
     assert request["messages"][0] == {"role": "system", "content": "提示"}
     assert json.loads(request["messages"][1]["content"]) == payload
     assert request["response_format"] == {
@@ -80,6 +81,21 @@ def test_no_choices_and_sdk_errors_propagate(fake_client):
         with pytest.raises(expected):
             request_json(client=client, model="test", system_prompt="prompt", payload={}, response_model=EntitiesResponse)
         assert len(client.calls) == 1
+
+
+def test_invalid_json_includes_bounded_escaped_response_preview(fake_client, api_response):
+    content = "```json\n" + "x" * 600 + "omitted tail"
+    client = fake_client([api_response(content=content)])
+    with pytest.raises(json.JSONDecodeError) as caught:
+        request_json(client=client, model="test-model", system_prompt="prompt", payload={}, response_model=EntitiesResponse)
+    note = caught.value.__notes__[0]
+    assert "Model 'test-model' returned invalid JSON" in note
+    assert r"```json\n" in note
+    assert "\n" not in note
+    assert "omitted tail" not in note
+    assert len(note) < 650
+    assert caught.value.doc == content
+    assert len(client.calls) == 1
 
 
 def test_prompt_language_and_term_modes():

@@ -26,13 +26,21 @@ def request_json(
     }
     if delay_between_requests > 0:
         time.sleep(delay_between_requests)
-    response = client.chat.completions.create(**request_kwargs)
+    response = client.chat.completions.create(**request_kwargs, reasoning_effort="none")
     choice = response.choices[0]
     if choice.finish_reason != "stop":
         raise ValueError(f"Unexpected finish_reason: {choice.finish_reason!r}; expected 'stop'")
     if choice.message.refusal:
         raise ValueError(f"Model refused the request: {choice.message.refusal}")
-    if not choice.message.content:
+    content = choice.message.content
+    if not content:
         raise ValueError("Model returned no text content")
-    return json.loads(choice.message.content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        exc.add_note(
+            f"Model {model!r} returned invalid JSON; "
+            f"content preview (first 500 chars): {content[:500]!r}"
+        )
+        raise
 
