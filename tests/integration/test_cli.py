@@ -182,7 +182,7 @@ def test_edited_global_glossary_candidates_reach_translation_on_resume(
     assert read_json(subset) == candidates
     assert len(client.calls) == 2
     request = client.calls[-1]
-    assert "候选不代表实际出现" in request["messages"][0]["content"]
+    assert "术语表或保留原词清单是本次待译文本的候选集合" in request["messages"][0]["content"]
     payload = json.loads(request["messages"][1]["content"])
     if no_translate:
         assert payload["do_not_translate_terms"] == sorted(candidates)

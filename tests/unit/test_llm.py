@@ -94,10 +94,9 @@ def test_prompt_language_and_term_modes():
     assert "glossary 是原词到译名的候选映射" not in translation_prompt(True)
     assert r"{\c&H00FFFF&}" in translation_prompt()
     for prompt in [translation_prompt(), translation_prompt(True)]:
-        assert "候选不代表实际出现" in prompt
-        assert "逐句根据当前 entries 的语境判断词条是否适用" in prompt
-        assert "Ann 可因 Anna 入选、Orc 可因 force 入选" in prompt
-        assert "因 Orc 改变 force 的正常翻译、将 force 保留原文" in prompt
-        assert "Moonshadow City 和 Moonshadow" in prompt
+        assert "术语表或保留原词清单是本次待译文本的候选集合" in prompt
+        assert "根据实际语境判断哪些词条适用" in prompt
+        assert "不要求每个候选都在译文中出现" in prompt
+        assert "不要将无关术语插入正文" in prompt
     assert "严格使用该词条的值" in translation_prompt()
     assert "不能因子串误匹配而将普通词保留原文" in translation_prompt(True)
