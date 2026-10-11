@@ -31,7 +31,16 @@ flowchart TD
 
 ## 安装
 
-需要 Python 3.11 或更高版本。在项目根目录创建并激活虚拟环境（PowerShell）：
+需要 Git 和 Python 3.11 或以上版本。以下命令以 Windows PowerShell 为例。
+
+先克隆项目并进入项目目录：
+
+```
+git clone https://github.com/chansey97/srt-translate.git
+cd srt-translate
+```
+
+创建并激活虚拟环境：
 
 ```powershell
 python -m venv .venv
