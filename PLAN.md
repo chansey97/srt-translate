@@ -260,7 +260,8 @@ srt-translate INPUT_SRT --source-lang LANG [--target-lang LANG] [OPTIONS]
 `--no-translate-glossary` 的内部变量名为 `no_translate_glossary`：
 
 - 未指定时为 False，对模型确认适用的候选使用 glossary 子集中的译名；
-- 指定时为 True，对模型确认适用的候选保留原文写法。两种模式都忽略仅因子串重合而入选的无关词条。
+- 指定时为 True，对模型确认适用的候选保留原文写法。
+- 两种模式都忽略仅因子串重合而入选的无关词条。
 
 `--delay-between-requests` 对应内部参数 `delay_between_requests`，默认 0.0，单位为秒；实体发现和翻译共用这个参数。
 
