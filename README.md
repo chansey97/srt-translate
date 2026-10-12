@@ -126,11 +126,13 @@ Blood.of.Zeus.S01E01__en_to_zh-Hans/backfill/Blood.of.Zeus.S01E01.srt
 srt-translate INPUT_SRT --source-lang LANG [--target-lang LANG] [OPTIONS]
 ```
 
+`LANG` 使用 BCP 47 语言标签：`en`（英语）、`ja`（日语）、`zh-Hans`（简体中文）、`zh-Hant`（繁体中文）。标签的各部分用连字符 `-` 连接，例如 `en-US`（美式英语）。
+
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
 | `INPUT_SRT` | 必填 | 原始 SRT 路径，各阶段均需提供 |
-| `--source-lang LANG` | 必填 | 源语言标签，如 `en`、`ja`、`fr` |
-| `--target-lang LANG` | `zh-Hans` | 目标语言标签，如 `en`、`zh-Hant` |
+| `--source-lang LANG` | 必填 | 源语言的 BCP 47 标签 |
+| `--target-lang LANG` | `zh-Hans` | 目标语言的 BCP 47 标签 |
 | `--background PATH` | 不提供 | UTF-8 背景文本，无扩展名限制 |
 | `--output-dir PATH` | 当前工作目录 | 输出父目录，任务目录名自动追加 |
 | `--config-file PATH` | 不提供 | 配置覆盖文件，优先级最高 |
