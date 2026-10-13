@@ -244,19 +244,3 @@ python -m venv .venv
 PyInstaller 使用 `--onedir --console`。中间文件位于 `build/portable/`，完整应用位于 `dist/srt-translate/`，发行包为 `dist/srt-translate-windows-x64.zip`。重复构建会重建该应用目录和 ZIP；随包的 `config.toml` 始终从包内默认配置复制，请将个人配置另存。ZIP 包含完整应用目录及本 README，不含 `PLAN.md`；仓库中的设计文档保留。
 
 `tests/portable` 需要先构建 ZIP；测试从含中文、空格和 emoji 的目录解压并启动 exe，验证配置加载、UTF-8 输出、退出码及完整翻译流程。模型请求仅发往测试创建的本机假 API，不连接真实服务。
-
-## 创建 GitHub 草稿 Release
-
-1. 确保默认分支已包含 `.github/workflows/release.yml`，让 Actions 显示手动入口；待发布 Tag 也必须包含工作流及全部打包文件。
-2. 将 `pyproject.toml` 的项目版本设为 `X.Y.Z`，提交后创建并推送对应的 `vX.Y.Z` Tag，例如版本 `0.1.0` 对应 `v0.1.0`。
-3. 在 Actions 中打开 **Windows portable draft release**，点击 **Run workflow**，在 **Use workflow from** 中直接选择目标 Tag，再运行。没有额外的 tag 输入参数；误选分支会明确失败。
-4. 工作流使用该 Tag 中的 YAML，并 checkout 本次事件的 `github.sha`。版本检查、依赖安装及 `pip check`、单元和集成测试、打包、portable 测试依次成功后，为 ZIP 创建 artifact attestation，再上传到草稿 Release。
-5. 在 Releases 页面检查附件和自动生成的说明，然后手动点击 **Publish release**。
-
-工作流仅支持手动触发，不运行 `tests/live`。同一 Tag 的运行通过 concurrency 串行化；已有草稿或正式 Release 时，创建操作失败并保留现有 Release，需手动处理后重试。工作流不会自动发布。
-
-下载后可用 GitHub CLI 校验构建来源：
-
-```powershell
-gh attestation verify .\srt-translate-windows-x64.zip --repo chansey97/srt-translate
-```
