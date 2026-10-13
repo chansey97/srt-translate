@@ -47,7 +47,7 @@ srt-translate/
 
 ```powershell
 .\srt-translate.exe --help
-.\srt-translate.exe "D:\字幕\示例 🎬.srt" --source-lang en --output-dir "D:\字幕\译文"
+.\srt-translate.exe "D:\subtitles\example.srt" --source-lang en --output-dir "D:\subtitles\translated"
 ```
 
 下文的 `srt-translate` 命令同样适用于 portable；在 PowerShell 中替换为 `.\srt-translate.exe` 或 exe 的完整路径。
