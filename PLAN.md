@@ -64,7 +64,7 @@ flowchart TD
 - 标准库 `argparse`、`pathlib`、`json`、`time`、`tomllib`、`importlib.resources`。
 - `pytest`：单元测试、集成测试及真实 API 测试。
 
-依赖统一声明在 pyproject.toml。项目名、发行包名、CLI 工具名和用户配置目录名使用 `srt-translate`，Python 包名为 `srt_translate`。包内默认配置命名为 `config.default.toml`，用户配置命名为 `config.toml`。
+运行及开发依赖声明在 pyproject.toml；Windows x64 Portable 的构建、运行和测试依赖版本锁定在 requirements-build.txt，包含 PyInstaller、setuptools 和 wheel，不含本机项目路径。项目名、发行包名、CLI 工具名和用户配置目录名使用 `srt-translate`，Python 包名为 `srt_translate`。包内默认配置命名为 `config.default.toml`，用户配置命名为 `config.toml`。
 
 ### 2.2 安装与入口
 
@@ -103,6 +103,8 @@ python -m pip install -e ".[dev]"
 srt-translate --help
 python -m srt_translate --help
 ```
+
+`src/srt_translate/__main__.py` 保留相对导入。PyInstaller 使用根目录 `portable_entry.py`，通过 `from srt_translate.cli import main` 绝对导入，并以 `raise SystemExit(main())` 传递退出码。
 
 ### 2.3 目录结构
 
@@ -150,12 +152,17 @@ python -m srt_translate --help
 ├── tests/
 │   ├── unit/
 │   ├── integration/
+│   ├── portable/                         # 解压 ZIP 后执行 exe 的离线验收
 │   └── live/
 ├── test_outputs/                         # 真实 API 测试产物，保留供调试
 │   └── live/
 │       └── <run_id>/
 │           └── <case_name>/
 ├── pyproject.toml
+├── requirements-build.txt
+├── portable_entry.py
+├── build_portable.bat
+├── .github/workflows/release.yml
 ├── PLAN.md
 └── README.md
 ```
@@ -202,6 +209,7 @@ CLI 的 `--output-dir` 指输出父目录，`task_dir` 指其中自动生成的�
 - JSON 使用 `ensure_ascii=False`、两空格缩进和 LF 文件换行。
 - 输出 SRT 使用 CRLF，即 `\r\n`。
 - SRT 字幕允许换行，译文的行数和换行位置可以不同于原文。
+- CLI 在解析参数和加载配置前，将 TextIOWrapper 类型的 stdout/stderr 重配置为 UTF-8，保留原 errors 策略；替换的其他文本流不做修改。普通安装与 portable 的管道、重定向和 subprocess 捕获均可输出完整的中文及 emoji 路径。
 
 ### 3.3 本地文件结构
 
@@ -234,7 +242,7 @@ srt-translate INPUT_SRT --source-lang LANG [--target-lang LANG] [OPTIONS]
 | `--target-lang LANG` | `zh-Hans` | 目标语言的 BCP 47 标签，如 en、ja、zh-Hans、zh-Hant、pt-BR |
 | `--background PATH` | 不提供 | 可选背景文件，通常约 100 个 token |
 | `--output-dir PATH` | 当前工作目录 | 输出父目录；始终在其下生成 `<stem>__<source_lang>_to_<target_lang>/` 任务目录 |
-| `--config-file PATH` | 不提供 | 按字段覆盖内置配置和用户配置，优先级最高 |
+| `--config-file PATH` | 不提供 | 按字段覆盖内置及用户/portable 配置，优先级最高 |
 | `--input-encoding NAME` | `utf-8-sig` | 原 SRT 解码方式 |
 | `--chunk-size N` | `20` | 正整数，仅抽取阶段使用 |
 | `--history-size N` | `5` | 非负整数；0 表示禁用历史 |
@@ -344,10 +352,13 @@ max_retries = 2
 `config.py` 的 `load_config(config_file=None)` 在每次命令执行时按以下顺序加载：
 
 1. 用 `importlib.resources` 读取 Python 包 `srt_translate` 内的 `config.default.toml`，该文件通过 package-data 打包。
-2. 用 `platformdirs.user_config_path("srt-translate", appauthor=False) / "config.toml"` 定位用户配置；不存在时跳过，不创建文件。
+2. 用 `getattr(sys, "frozen", False)` 区分模式：
+   - 普通 Python 安装读取 `platformdirs.user_config_path("srt-translate", appauthor=False) / "config.toml"`；
+   - portable 读取 `Path(sys.executable).resolve().parent / "config.toml"`，不读取系统用户配置。
+   - 此层文件不存在时跳过，不创建文件。
 3. 读取 `--config-file PATH` 指定的文件；相对路径基于当前工作目录，显式指定但不存在时报错。
 
-按 `[openai]` 内的字段逐层覆盖，未声明的字段保留前一层的值。首版只配置以上四项，其他翻译参数继续由现有 CLI 参数提供，不自动搜索当前目录配置。
+按 `[openai]` 内的字段逐层覆盖，未声明的字段保留前一层的值。首版只配置以上四项，其他翻译参数继续由现有 CLI 参数提供，不额外搜索当前工作目录配置。Portable 配置位置始终相对于 exe 而非工作目录。
 
 每层在合并时严格校验：前三项为非空字符串，`max_retries` 为非负整数；未知表、未知字段、类型错误、TOML 语法错误和读取失败都会报告配置路径。更高优先级配置不能掩盖低优先级文件中的错误。
 
@@ -936,6 +947,7 @@ extract 仍需解析原 SRT 才能确定分片。已有文件在后续被使用�
 
 - tests/unit：配置加载、文件处理、glossary 合并、子集生成、回填等确定性逻辑。
 - tests/integration：使用假客户端验证阶段衔接、请求内容、CLI 和产物复用。
+- tests/portable：在 Windows 上解压已构建 ZIP，从其他工作目录执行 exe；通过本机假 HTTP API 验证冻结依赖和完整六阶段流程，不连接真实 API。未构建 ZIP 时明确失败。
 - tests/live：加载内置配置和实际用户配置，以少量字幕验证真实请求、响应解包及翻译效果。配置与 CLI 的普通测试使用隔离的用户配置路径。
 
 pytest 的默认 testpaths 指向 tests/unit 和 tests/integration。真实 API 测试通过指定目录运行，不在普通测试中自动发起请求。目录选择规则见 [pytest testpaths 文档](https://docs.pytest.org/en/stable/reference/reference.html#confval-testpaths)：
@@ -944,6 +956,8 @@ pytest 的默认 testpaths 指向 tests/unit 和 tests/integration。真实 API 
 python -m pytest
 python -m pytest tests/live
 ```
+
+构建完成后单独执行 `python -m pytest tests/portable`。普通测试覆盖两类安装入口在受限初始编码下的 UTF-8 捕获、重定向和参数/配置错误，以及替换文本流兼容性与 errors 策略保留。Portable 测试覆盖包内容、默认配置资源、配置优先级、忽略用户目录和工作目录配置、中文及 emoji 路径、退出码 0/1/2 和真实 exe 对本机假 API 的请求。
 
 真实 API 测试使用项目中的持久目录 `test_outputs/live/<run_id>/<case_name>/`，成功或失败后均保留文件，方便调试。每次测试运行创建一个新的时间戳 run_id（包含微秒），每个用例使用独立子目录；在其中保存测试输入，并将其 `outputs/` 子目录作为输出父目录，由 CLI 追加 `input__<source_lang>_to_<target_lang>/` 任务目录。
 
@@ -991,6 +1005,7 @@ python -m pytest tests/live
 - 现有产物即跳过，不检查内容、不覆盖人工编辑。
 - 任务目录由 stem、source_lang、target_lang 组成；不同主名或语言组合使用不同目录，相同参数续跑使用同一目录。输出父目录默认为当前工作目录，显式 output-dir 时也追加任务目录名；省略参数与 `./` 等价。
 - 配置按内置、用户、显式文件的顺序逐字段覆盖；覆盖文件可以只包含部分字段；零次重试有效。两个模型阶段使用生效配置。
+- Portable 将中间配置层替换为 exe 同目录文件；其缺失时使用内置值，其错误不能由显式配置覆盖掩盖。
 - 用户配置缺失时跳过；显式配置缺失、配置内容或读取错误在所有阶段前停止，不生成产物；错误指出文件和相关字段。
 - 单独执行某个阶段只读取其约定输入，不补跑上游阶段，也不推断预期分片数。验证 15 个 entries、14 个 entities 时，glossary 只汇总现有 14 片。
 - 翻译当前 entries 时需要读取的同名子集不存在，则正常报错；读取的同名子集内容为 `{}` 时，则可以请求模型。
@@ -1016,3 +1031,28 @@ README 至少包含：
 - 全部 CLI 参数、典型用法、任务目录与输出父目录的含义。
 - glossary 增删改、候选语义、检查编辑与续跑方式，以及已有产物跳过和清理简表。
 - 普通测试与真实 API 测试的运行方式及真实测试产物的位置。
+- Portable 下载、完整解压、exe 命令及配置位置；本地构建与 portable 测试；手动选择 Tag 创建草稿和最终 Publish release 的步骤。
+
+## 13. Windows x64 portable 与草稿 Release
+
+### 13.1 本地构建
+
+Release 构建使用 Python 3.14 x64。本地手动创建 `.venv`，安装 `requirements-build.txt`，再执行 `pip install --no-deps --no-build-isolation .` 和 `pip check`。构建脚本本身不下载或安装依赖。
+
+`build_portable.bat` 可双击，定位到项目根目录并固定使用 `.venv\Scripts\python.exe`，检查 Windows、x64 Python 和 PyInstaller。使用 `--onedir --console`，构建缓存、spec 和工作文件均放在 `build/portable/`。OpenAI 延迟导入的子模块与 HTTP 客户端需要的 distribution metadata 随应用收集；通过 exe 的本机假 API 测试验收。
+
+产物为 `dist/srt-translate/` 及 `dist/srt-translate-windows-x64.zip`。ZIP 保留 `srt-translate/` 顶层目录，包含 exe、完整 `_internal`、从包内默认配置复制的 `config.toml` 和仓库 README。PLAN.md 留在仓库中，不进入发行包。重复构建重建应用目录和 ZIP，个人配置需另存。
+
+每个关键外部命令失败时立即停止，脚本返回非零退出码；成功返回 0。本地成功或失败均暂停，存在 `CI` 环境变量时跳过暂停。
+
+### 13.2 GitHub Actions
+
+`.github/workflows/release.yml` 仅由 `workflow_dispatch` 触发，不定义 tag 输入。默认分支需包含此文件以提供手动入口，目标 Tag 也须包含完整工作流和打包文件。
+
+用户在 **Run workflow → Use workflow from** 选择目标 Tag；运行该 Tag 中的工作流，不重新加载 main 的 YAML。工作流先检查 `github.ref_type == 'tag'`，误选分支明确失败，再从 `github.ref_name` 获取 Tag，限定为不含前导零的 `vX.Y.Z`。Checkout 明确指定 `github.sha`，校验 Tag 与该提交的 pyproject.toml 版本完全一致。
+
+Windows runner 依次执行：创建 `.venv` → 按 requirements-build.txt 安装依赖 → `pip install --no-deps --no-build-isolation .` → `pip check` → tests/unit 与 tests/integration → cmd shell 调用 build_portable.bat → tests/portable → ZIP artifact attestation → `gh release create` 上传 ZIP。PowerShell 中逐个检查外部命令的 `$LASTEXITCODE`，任何失败均阻止后续发布。
+
+Release 命令包含 `--draft --verify-tag --generate-notes`，仅创建草稿，由用户在 Releases 页面手动 **Publish release**。同一 Tag 使用相同 concurrency 组且不取消正在执行的运行；已有草稿或正式 Release 时创建失败，保留已有内容，不自动更新。工作流不运行 tests/live。
+
+实现依据：[GitHub workflow_dispatch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)、[artifact attestation](https://github.com/actions/attest)、[gh release create](https://cli.github.com/manual/gh_release_create)、[PyInstaller runtime information](https://pyinstaller.org/en/stable/runtime-information.html)。

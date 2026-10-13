@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from pathlib import Path
@@ -288,3 +289,68 @@ def test_both_installed_entrypoints_have_identical_help():
     assert "--no-translate-glossary" in module_result.stdout
     assert "--delay-between-requests" in module_result.stdout
     assert "--config-file PATH" in module_result.stdout
+
+
+@pytest.mark.parametrize("errors", ["strict", "backslashreplace"])
+def test_cli_reconfigures_real_streams_and_preserves_error_policy(tmp_path, monkeypatch, errors):
+    stdout_buffer, stderr_buffer = io.BytesIO(), io.BytesIO()
+    stdout = io.TextIOWrapper(stdout_buffer, encoding="cp1252", errors=errors)
+    stderr = io.TextIOWrapper(stderr_buffer, encoding="cp1252", errors=errors)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    source = tmp_path / "缺失字幕 🎬.srt"
+    assert cli.main([
+        str(source), "--source-lang", "en", "--output-dir", str(tmp_path), "--to-stage", "extract",
+    ]) == 1
+    stdout.flush()
+    stderr.flush()
+    assert source.stem in stdout_buffer.getvalue().decode("utf-8")
+    assert str(source) in stderr_buffer.getvalue().decode("utf-8")
+    assert stdout.errors == stderr.errors == errors
+
+
+def test_cli_supports_replaced_text_streams(monkeypatch):
+    stdout, stderr = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    with pytest.raises(SystemExit) as caught:
+        cli.main(["--help"])
+    assert caught.value.code == 0
+    assert "--config-file PATH" in stdout.getvalue()
+    assert stderr.getvalue() == ""
+
+
+@pytest.mark.parametrize("entrypoint", ["module", "console"])
+@pytest.mark.parametrize("output_mode", ["pipe", "redirect"])
+@pytest.mark.parametrize("failure", [None, "config", "argument"])
+def test_installed_entrypoints_emit_utf8(tmp_path, make_srt, entrypoint, output_mode, failure):
+    source = make_srt([(1, "Hello")], filename="字幕 🎬.srt")
+    console = Path(sys.executable).with_name("srt-translate.exe" if os.name == "nt" else "srt-translate")
+    command = [sys.executable, "-m", "srt_translate"] if entrypoint == "module" else [str(console)]
+    command += [str(source), "--source-lang", "en", "--to-stage", "extract"]
+    if failure == "config":
+        command += ["--config-file", str(tmp_path / "缺失配置 🎬.toml")]
+    elif failure == "argument":
+        command += ["--未知参数🎬"]
+    env = {
+        **os.environ,
+        "APPDATA": str(tmp_path / "user"), "LOCALAPPDATA": str(tmp_path / "user"),
+        "XDG_CONFIG_HOME": str(tmp_path / "user"),
+        "PYTHONIOENCODING": "cp1252:strict", "PYTHONUTF8": "0",
+    }
+    if output_mode == "pipe":
+        result = subprocess.run(command, cwd=tmp_path, env=env, capture_output=True, timeout=30)
+        stdout, stderr = result.stdout, result.stderr
+    else:
+        stdout_path, stderr_path = tmp_path / "stdout.txt", tmp_path / "stderr.txt"
+        with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
+            result = subprocess.run(command, cwd=tmp_path, env=env, stdout=out, stderr=err, timeout=30)
+        stdout, stderr = stdout_path.read_bytes(), stderr_path.read_bytes()
+    assert result.returncode == (2 if failure else 0), stderr.decode("utf-8")
+    if failure == "config":
+        assert str(tmp_path / "缺失配置 🎬.toml") in stderr.decode("utf-8")
+    elif failure == "argument":
+        assert "--未知参数🎬" in stderr.decode("utf-8")
+    else:
+        assert source.stem in stdout.decode("utf-8")
+        assert stderr == b""

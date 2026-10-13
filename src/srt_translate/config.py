@@ -2,6 +2,7 @@
 
 from importlib.resources import files
 from pathlib import Path
+import sys
 import tomllib
 
 from platformdirs import user_config_path
@@ -20,9 +21,14 @@ class OpenAIConfig(BaseModel):
 
 
 def load_config(config_file: Path | None = None) -> OpenAIConfig:
+    config_dir = (
+        Path(sys.executable).resolve().parent
+        if getattr(sys, "frozen", False)
+        else user_config_path("srt-translate", appauthor=False)
+    )
     sources = [
         (files("srt_translate").joinpath("config.default.toml"), True),
-        (user_config_path("srt-translate", appauthor=False) / "config.toml", False),
+        (config_dir / "config.toml", False),
     ]
     if config_file is not None:
         sources.append((config_file.resolve(), True))

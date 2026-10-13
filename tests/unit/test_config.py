@@ -1,3 +1,5 @@
+import sys
+
 import pytest
 
 from srt_translate.config import load_config
@@ -103,3 +105,47 @@ def test_validation_errors_do_not_echo_api_key(user_config_file):
         load_config()
     assert "api_key" in str(caught.value)
     assert "private-test-key" not in str(caught.value)
+
+
+@pytest.fixture
+def portable_config_file(tmp_path, monkeypatch):
+    directory = tmp_path / "portable 应用 🎬"
+    directory.mkdir()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(directory / "srt-translate.exe"))
+    return directory / "config.toml"
+
+
+def test_portable_layers_ignore_user_and_working_directory_config(
+    tmp_path, monkeypatch, user_config_file, portable_config_file,
+):
+    monkeypatch.chdir(tmp_path)
+    user_config_file.write_text("invalid user config", encoding="utf-8")
+    (tmp_path / "config.toml").write_text("invalid cwd config", encoding="utf-8")
+    portable_config_file.write_text(
+        '[openai]\napi_key = "portable-key"\nmodel = "portable-model"\n', encoding="utf-8",
+    )
+    explicit = tmp_path / "explicit.toml"
+    explicit.write_text('[openai]\nmodel = "explicit-model"\n', encoding="utf-8")
+    assert load_config(explicit).model_dump() == {
+        "base_url": "http://127.0.0.1:8317/v1",
+        "api_key": "portable-key",
+        "model": "explicit-model",
+        "max_retries": 2,
+    }
+    assert load_config().model == "portable-model"
+
+
+def test_missing_portable_configuration_keeps_defaults(portable_config_file, user_config_file):
+    user_config_file.write_text("invalid user config", encoding="utf-8")
+    assert not portable_config_file.exists()
+    assert load_config().model == "gemini-3.8-flash-high"
+
+
+def test_explicit_override_does_not_hide_invalid_portable_configuration(tmp_path, portable_config_file):
+    portable_config_file.write_text('[openai]\nmodel = 42\n', encoding="utf-8")
+    explicit = tmp_path / "explicit.toml"
+    explicit.write_text('[openai]\nmodel = "valid-model"\n', encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        load_config(explicit)
+    assert str(portable_config_file) in str(caught.value)

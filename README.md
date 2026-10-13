@@ -1,6 +1,6 @@
 # SRT 字幕翻译工具
 
-通过 OpenAI Compatible API 翻译 SRT 字幕，支持统一术语、人工校对和分阶段续跑。源语言必填，默认译为简体中文（`zh-Hans`），原字幕文件保持不变。详细设计见 [PLAN.md](PLAN.md)。
+通过 OpenAI Compatible API 翻译 SRT 字幕，支持统一术语、人工校对和分阶段续跑。源语言必填，默认译为简体中文（`zh-Hans`），原字幕文件保持不变。详细设计见[仓库中的 PLAN.md](https://github.com/chansey97/srt-translate/blob/main/PLAN.md)。
 
 ## 六阶段流程
 
@@ -30,6 +30,29 @@ flowchart TD
 ```
 
 ## 安装
+
+### Windows x64 portable
+
+从 [Releases](https://github.com/chansey97/srt-translate/releases) 下载 `srt-translate-windows-x64.zip`，完整解压后即可运行，无需安装 Python。应用目录如下；移动应用时保留整个目录：
+
+```text
+srt-translate/
+├── srt-translate.exe
+├── _internal/
+├── config.toml
+└── README.md
+```
+
+编辑 exe 同目录的 `config.toml`，填写 API 服务信息。在该目录打开 PowerShell，运行：
+
+```powershell
+.\srt-translate.exe --help
+.\srt-translate.exe "D:\字幕\示例 🎬.srt" --source-lang en --output-dir "D:\字幕\译文"
+```
+
+下文的 `srt-translate` 命令同样适用于 portable；在 PowerShell 中替换为 `.\srt-translate.exe` 或 exe 的完整路径。
+
+### Python 安装
 
 需要 Git 和 Python 3.11 或以上版本。以下命令以 Windows PowerShell 为例。
 
@@ -76,19 +99,19 @@ srt-translate input.srt --source-lang en --config-file ./config.toml
 
 配置按字段叠加，后者只覆盖自己填写的字段：
 
-| 优先级 | 来源 |
-| --- | --- |
-| 低 | 应用内置的 [config.default.toml](src/srt_translate/config.default.toml) |
-| 中 | 系统用户配置目录中的 `srt-translate/config.toml` |
-| 高 | `--config-file PATH` 指定的文件 |
+| 优先级 | Python 安装 | Portable |
+| --- | --- | --- |
+| 低 | 包内 `config.default.toml` | 包内 `config.default.toml` |
+| 中 | 系统用户配置目录中的 `srt-translate/config.toml` | exe 同目录的 `config.toml` |
+| 高 | `--config-file PATH` 指定的文件 | `--config-file PATH` 指定的文件 |
 
-用户配置文件可自行创建，以下命令显示其完整路径：
+Python 安装的用户配置文件可自行创建，以下命令显示其完整路径：
 
 ```powershell
 python -c "from platformdirs import user_config_path; print(user_config_path('srt-translate', appauthor=False) / 'config.toml')"
 ```
 
-程序不会自动读取当前目录中的 `config.toml`，需用 `--config-file` 指定。用户配置文件不存在时跳过；显式指定的文件缺失，或配置存在语法、类型及未知字段错误时，会在运行前报错。
+Portable 不读取系统用户配置，只按 exe 的实际位置查找同目录配置，启动时的工作目录不影响此位置。程序不会额外搜索当前工作目录中的 `config.toml`；其他配置位置需用 `--config-file` 指定。中间层配置不存在时跳过；显式指定的文件缺失，或配置存在语法、类型及未知字段错误时，会在运行前报错。
 
 ## 使用
 
@@ -119,6 +142,8 @@ Blood.of.Zeus.S01E01__en_to_zh-Hans/backfill/Blood.of.Zeus.S01E01.srt
 ```
 
 所有相对路径基于当前工作目录。同名字幕使用相同语言组合时，请指定不同的输出父目录以区分任务。
+
+标准输出和错误输出统一使用 UTF-8，支持中文及 emoji 路径。通过管道、文件重定向或 `subprocess` 捕获时，接收端应按 UTF-8 解码。
 
 ### CLI 参数
 
@@ -198,4 +223,40 @@ python -m pytest
 
 ```powershell
 python -m pytest tests/live
+```
+
+## 构建 Windows x64 portable
+
+Release 使用 Python 3.14 x64；本地构建建议使用相同版本。在项目根目录准备 `.venv`，手动安装锁定的构建、运行和测试依赖：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation .
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pytest tests/unit tests/integration
+.\build_portable.bat
+.\.venv\Scripts\python.exe -m pytest tests/portable
+```
+
+各条命令成功后再执行下一条。修改源码后，先重新安装当前项目再测试。`build_portable.bat` 也可双击运行：它检查 Windows、x64 Python 和 PyInstaller，使用项目 `.venv` 构建，不下载或安装依赖。执行成功或失败后均暂停；存在 `CI` 环境变量时跳过暂停。
+
+PyInstaller 使用 `--onedir --console`。中间文件位于 `build/portable/`，完整应用位于 `dist/srt-translate/`，发行包为 `dist/srt-translate-windows-x64.zip`。重复构建会重建该应用目录和 ZIP；随包的 `config.toml` 始终从包内默认配置复制，请将个人配置另存。ZIP 包含完整应用目录及本 README，不含 `PLAN.md`；仓库中的设计文档保留。
+
+`tests/portable` 需要先构建 ZIP；测试从含中文、空格和 emoji 的目录解压并启动 exe，验证配置加载、UTF-8 输出、退出码及完整翻译流程。模型请求仅发往测试创建的本机假 API，不连接真实服务。
+
+## 创建 GitHub 草稿 Release
+
+1. 确保默认分支已包含 `.github/workflows/release.yml`，让 Actions 显示手动入口；待发布 Tag 也必须包含工作流及全部打包文件。
+2. 将 `pyproject.toml` 的项目版本设为 `X.Y.Z`，提交后创建并推送对应的 `vX.Y.Z` Tag，例如版本 `0.1.0` 对应 `v0.1.0`。
+3. 在 Actions 中打开 **Windows portable draft release**，点击 **Run workflow**，在 **Use workflow from** 中直接选择目标 Tag，再运行。没有额外的 tag 输入参数；误选分支会明确失败。
+4. 工作流使用该 Tag 中的 YAML，并 checkout 本次事件的 `github.sha`。版本检查、依赖安装及 `pip check`、单元和集成测试、打包、portable 测试依次成功后，为 ZIP 创建 artifact attestation，再上传到草稿 Release。
+5. 在 Releases 页面检查附件和自动生成的说明，然后手动点击 **Publish release**。
+
+工作流仅支持手动触发，不运行 `tests/live`。同一 Tag 的运行通过 concurrency 串行化；已有草稿或正式 Release 时，创建操作失败并保留现有 Release，需手动处理后重试。工作流不会自动发布。
+
+下载后可用 GitHub CLI 校验构建来源：
+
+```powershell
+gh attestation verify .\srt-translate-windows-x64.zip --repo chansey97/srt-translate
 ```

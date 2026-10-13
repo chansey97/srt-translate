@@ -1,4 +1,5 @@
 import argparse
+import io
 import math
 import re
 import sys
@@ -73,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--config-file", type=Path, metavar="PATH",
-        help="TOML configuration file overriding built-in and user settings by field",
+        help="TOML configuration file overriding built-in and user/portable settings by field",
     )
     parser.add_argument(
         "--input-encoding", default="utf-8-sig", metavar="NAME",
@@ -107,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows pipes can default to an encoding that cannot represent subtitle paths.
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors=stream.errors)
+
     parser = build_parser()
     args = parser.parse_args(argv)
     start, end = STAGES.index(args.from_stage), STAGES.index(args.to_stage)

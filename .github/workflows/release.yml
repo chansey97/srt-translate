@@ -1,0 +1,96 @@
+name: Windows portable draft release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RELEASE_REF_TYPE: ${{ github.ref_type }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Require a version tag
+        run: |
+          if ($env:RELEASE_REF_TYPE -ne 'tag') {
+            throw 'Select a Tag in Run workflow > Use workflow from; branches cannot be released.'
+          }
+          if ($env:RELEASE_TAG -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+            throw "Tag '$env:RELEASE_TAG' must have the form vX.Y.Z."
+          }
+
+      - name: Check out the selected commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python x64
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          architecture: x64
+
+      - name: Check project version
+        run: |
+          $version = python -c "import tomllib; from pathlib import Path; print(tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version'])"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:RELEASE_TAG -cne "v$version") {
+            throw "Tag '$env:RELEASE_TAG' does not match project version '$version'."
+          }
+
+      - name: Install build dependencies and project
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\.venv\Scripts\python.exe -m pip check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run unit and integration tests
+        run: |
+          & .\.venv\Scripts\python.exe -m pytest tests/unit tests/integration
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build portable ZIP
+        shell: cmd
+        run: build_portable.bat
+
+      - name: Test the portable ZIP
+        run: |
+          & .\.venv\Scripts\python.exe -m pytest tests/portable
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Attest the portable ZIP
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/srt-translate-windows-x64.zip
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $existingTags = gh api --paginate "repos/$env:GH_REPO/releases?per_page=100" --jq '.[].tag_name'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($existingTags -ccontains $env:RELEASE_TAG) {
+            throw "A draft or published Release already exists for '$env:RELEASE_TAG'; handle it manually before retrying."
+          }
+          gh release create "$env:RELEASE_TAG" 'dist/srt-translate-windows-x64.zip' --draft --verify-tag --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
