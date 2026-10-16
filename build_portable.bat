@@ -43,6 +43,8 @@ copy /y "src\srt_translate\config.default.toml" "dist\srt-translate\config.toml"
 if errorlevel 1 goto failed
 copy /y "README.md" "dist\srt-translate\README.md" >nul
 if errorlevel 1 goto failed
+copy /y "README.en.md" "dist\srt-translate\README.en.md" >nul
+if errorlevel 1 goto failed
 
 "%PORTABLE_PYTHON%" -c "import shutil; shutil.make_archive('dist/srt-translate-windows-x64', 'zip', 'dist', 'srt-translate')"
 if errorlevel 1 goto failed

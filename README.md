@@ -1,3 +1,5 @@
+[简体中文](README.md) | [English](README.en.md)
+
 # SRT 字幕翻译工具
 
 ## 介绍
